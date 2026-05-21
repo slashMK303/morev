@@ -1,7 +1,7 @@
 # Pembagian Tugas
 
 ## Nanang
-- [✅] Membuat halaman Register
+- [X] Membuat halaman Register
 - [✅] Membuat halaman Login
 - [✅] Membuat halaman Dashboard/Home
 
@@ -18,9 +18,9 @@
 
 # Progress Project
 
-- [X] Register
-- [X] Login
-- [X] Dashboard/Home
+- [✅] Register
+- [✅] Login
+- [✅] Dashboard/Home
 - [ ] Details
 - [ ] Watchlist
 - [ ] Profile
