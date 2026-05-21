@@ -1,7 +1,7 @@
 # Pembagian Tugas
 
 ## Nanang
-- [✅] Membuat halaman Register
+- [X] Membuat halaman Register
 - [✅] Membuat halaman Login
 - [✅] Membuat halaman Dashboard/Home
 
