@@ -6,6 +6,9 @@ import '../theme/app_theme.dart';
 import '../widgets/custom_button.dart';
 import '../widgets/profile_picker.dart';
 import 'login_screen.dart';
+import 'movie_detail_screen.dart';
+import 'watchlist_screen.dart';
+import 'profile_screen.dart';
 
 class MovieListScreen extends StatefulWidget {
   final AppState appState;
@@ -386,10 +389,13 @@ class _MovieListScreenState extends State<MovieListScreen> {
                     Expanded(
                       child: InkWell(
                         onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              backgroundColor: Color(0xFF1F222B),
-                              content: Text('Fitur detail film belum difungsikan.'),
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => MovieDetailScreen(
+                                movie: movie,
+                                appState: widget.appState,
+                              ),
                             ),
                           );
                         },
@@ -434,9 +440,11 @@ class _MovieListScreenState extends State<MovieListScreen> {
 
   Widget _buildHomeTab() {
     final filteredMovies = Movie.mockMovies.where((movie) {
-      final matchesSearch = movie.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+      final matchesSearch =
+          movie.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
           movie.description.toLowerCase().contains(_searchQuery.toLowerCase());
-      final matchesGenre = _selectedGenre == 'Semua' || movie.genre == _selectedGenre;
+      final matchesGenre =
+          _selectedGenre == 'Semua' || movie.genre == _selectedGenre;
       return matchesSearch && matchesGenre;
     }).toList();
 
@@ -552,7 +560,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
                         size: 64,
                         color: AppTheme.textMuted,
                       ),
-                      const SizedBox(height: 16),
+                      SizedBox(height: 16),
                       Text(
                         'Tidak ada film yang cocok.',
                         style: TextStyle(
@@ -633,9 +641,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
                       child: Text(
                         genre,
                         style: TextStyle(
-                          color: isSelected
-                              ? Colors.black
-                              : AppTheme.textMuted,
+                          color: isSelected ? Colors.black : AppTheme.textMuted,
                           fontWeight: isSelected
                               ? FontWeight.bold
                               : FontWeight.normal,
@@ -653,48 +659,41 @@ class _MovieListScreenState extends State<MovieListScreen> {
     );
   }
 
-  Widget _buildPlaceholder(int tabIndex) {
-    return Center(
-      key: ValueKey(tabIndex),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            tabIndex == 1 ? Icons.bookmark_rounded : Icons.person_rounded,
-            size: 64,
-            color: AppTheme.textMuted,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            tabIndex == 1
-                ? 'Halaman Watchlist Belum Tersedia'
-                : 'Halaman Profil Belum Tersedia',
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 16,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final activeTab = widget.appState.activeTab;
+    final watchlistCount = widget.appState.watchlistIds.length;
+
+    // Judul AppBar dinamis sesuai tab
+    final appBarTitles = ['Morev', 'Watchlist', 'Profil'];
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Morev',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-            color: AppTheme.primaryGold,
-            letterSpacing: 0.5,
-          ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              appBarTitles[activeTab],
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 22,
+                color: AppTheme.primaryGold,
+                letterSpacing: 0.5,
+              ),
+            ),
+            // Subtitle untuk tab Watchlist
+            if (activeTab == 1)
+              Text(
+                '$watchlistCount film tersimpan',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.normal,
+                ),
+              ),
+          ],
         ),
       ),
       body: PageView(
@@ -707,8 +706,8 @@ class _MovieListScreenState extends State<MovieListScreen> {
         },
         children: [
           _buildHomeTab(),
-          _buildPlaceholder(1),
-          _buildPlaceholder(2),
+          WatchlistTab(appState: widget.appState),
+          ProfileTab(appState: widget.appState),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
