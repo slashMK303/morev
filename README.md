@@ -6,9 +6,9 @@
 - [X] Membuat halaman Dashboard/Home
 
 ## Irfan
-- [ ] Membuat halaman Details
-- [ ] Membuat halaman Watchlist
-- [ ] Membuat halaman Profile
+- [X] Membuat halaman Details
+- [X] Membuat halaman Watchlist
+- [X] Membuat halaman Profile
 
 ## Hydar
 - [ ] Membuat halaman Rate History
@@ -21,9 +21,9 @@
 - [X] Register
 - [X] Login
 - [X] Dashboard/Home
-- [ ] Details
-- [ ] Watchlist
-- [ ] Profile
+- [X] Details
+- [X] Watchlist
+- [X] Profile
 - [ ] Rate History
 - [ ] Watch History
 
