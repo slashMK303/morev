@@ -3,6 +3,8 @@ import '../models/review.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'login_screen.dart';
+import 'rate_history_screen.dart';
+import 'watch_history_screen.dart';
 
 class ProfileTab extends StatelessWidget {
   final AppState appState;
@@ -185,13 +187,12 @@ class ProfileTab extends StatelessWidget {
                   icon: Icons.star_border_rounded,
                   label: 'Riwayat Rating',
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        backgroundColor: Color(0xFF1F222B),
-                        content: Text(
-                          'Fitur Riwayat Rating segera hadir!',
-                          style: TextStyle(color: AppTheme.primaryGold),
-                        ),
+                    // Pindah ke riwayat rating
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            RateHistoryScreen(appState: appState),
                       ),
                     );
                   },
@@ -207,13 +208,12 @@ class ProfileTab extends StatelessWidget {
                   icon: Icons.access_time_rounded,
                   label: 'Riwayat Nonton',
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        backgroundColor: Color(0xFF1F222B),
-                        content: Text(
-                          'Fitur Riwayat Nonton segera hadir!',
-                          style: TextStyle(color: AppTheme.primaryGold),
-                        ),
+                    // Pindah ke riwayat nonton
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            WatchHistoryScreen(appState: appState),
                       ),
                     );
                   },
@@ -233,19 +233,14 @@ class ProfileTab extends StatelessWidget {
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => LoginScreen(
-                      appState: appState,
-                    ),
+                    builder: (context) => LoginScreen(appState: appState),
                   ),
                 );
               },
               icon: const Icon(Icons.logout_rounded, size: 20),
               label: const Text(
                 'Logout',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.redAccent,
@@ -277,16 +272,9 @@ class ProfileTab extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: const Color(0xFF2C303E),
-            border: Border.all(
-              color: const Color(0xFF3A3E4C),
-              width: 1,
-            ),
+            border: Border.all(color: const Color(0xFF3A3E4C), width: 1),
           ),
-          child: Icon(
-            icon,
-            color: AppTheme.primaryGold,
-            size: 22,
-          ),
+          child: Icon(icon, color: AppTheme.primaryGold, size: 22),
         ),
         const SizedBox(height: 8),
         Text(
@@ -300,10 +288,7 @@ class ProfileTab extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           label,
-          style: const TextStyle(
-            color: AppTheme.textMuted,
-            fontSize: 11,
-          ),
+          style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
           textAlign: TextAlign.center,
         ),
       ],
@@ -324,11 +309,7 @@ class ProfileTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Row(
           children: [
-            Icon(
-              icon,
-              color: AppTheme.primaryGold,
-              size: 22,
-            ),
+            Icon(icon, color: AppTheme.primaryGold, size: 22),
             const SizedBox(width: 14),
             Expanded(
               child: Text(
