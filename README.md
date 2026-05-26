@@ -11,8 +11,8 @@
 - [X] Membuat halaman Profile
 
 ## Hydar
-- [ ] Membuat halaman Rate History
-- [ ] Membuat halaman Watch History
+- [X] Membuat halaman Rate History
+- [X] Membuat halaman Watch History
 
 ---
 
@@ -24,8 +24,8 @@
 - [X] Details
 - [X] Watchlist
 - [X] Profile
-- [ ] Rate History
-- [ ] Watch History
+- [X] Rate History
+- [X] Watch History
 
 ---
 
