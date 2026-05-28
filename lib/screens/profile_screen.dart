@@ -1,35 +1,347 @@
 import 'package:flutter/material.dart';
-import '../models/review.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
+import '../models/profile_api.dart';
+import '../services/profile_service.dart';
 import '../state/app_state.dart';
+import '../storage/profile_storage.dart';
+import '../storage/token_storage.dart';
+import '../storage/view_storage.dart';
+import '../storage/watchlist_storage.dart';
+import '../utils/api_error_handler.dart';
+import '../utils/profile_photo_url.dart';
 import '../theme/app_theme.dart';
+import '../widgets/profile_picker.dart';
 import 'login_screen.dart';
 import 'rate_history_screen.dart';
 import 'watch_history_screen.dart';
 
-class ProfileTab extends StatelessWidget {
+class ProfileTab extends StatefulWidget {
   final AppState appState;
 
   const ProfileTab({super.key, required this.appState});
 
   @override
-  Widget build(BuildContext context) {
-    final user = appState.currentUser;
-    final namaLengkap = user?.namaLengkap ?? 'Pengguna';
-    final username = user?.username ?? 'user';
-    final kalimatMotivasi = user?.kalimatMotivasi ?? '';
-    final initial = namaLengkap.isNotEmpty ? namaLengkap[0].toUpperCase() : '?';
+  State<ProfileTab> createState() => _ProfileTabState();
+}
 
-    // Hitung statistik
-    final totalReviews = Review.mockReviews.length;
-    final filmDitonton = 0; // Placeholder
-    final genreFavorit = '-'; // Placeholder
+class _ProfileTabState extends State<ProfileTab> {
+  final ProfileService _profileService = ProfileService();
+  final ProfileStorage _profileStorage = ProfileStorage();
+  final TokenStorage _tokenStorage = TokenStorage();
+  ProfileApi? _profile;
+  Map<String, dynamic>? _statistics;
+  bool _loading = false;
+  String? _error;
+  bool _profileLoadedForCurrentVisit = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.appState.addListener(_onStateChange);
+    _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    widget.appState.removeListener(_onStateChange);
+    super.dispose();
+  }
+
+  void _onStateChange() {
+    if (!mounted) return;
+    if (widget.appState.activeTab == 2) {
+      if (!_profileLoadedForCurrentVisit) {
+        _profileLoadedForCurrentVisit = true;
+        _loadProfile();
+      }
+    } else {
+      _profileLoadedForCurrentVisit = false;
+    }
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final token = await _tokenStorage.getToken();
+    if (token == null) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Token login tidak ditemukan. Silakan login ulang.';
+        });
+      }
+      return;
+    }
+
+    try {
+      final profileResp = await _profileService.getProfile(token: token);
+      final statisticsResp = await _profileService.getStatistics(token: token);
+      final localProfile = await _profileStorage.loadProfile();
+
+      if (profileResp.statusCode == 200 && statisticsResp.statusCode == 200) {
+        if (mounted) {
+          final statisticsData = Map<String, dynamic>.from(
+            statisticsResp.data['data'],
+          );
+          final totalViews = statisticsData['total_views'] is int
+              ? statisticsData['total_views']
+              : int.tryParse(
+                      statisticsData['total_views']?.toString() ?? '0',
+                    ) ??
+                    0;
+          final serverProfile = Map<String, dynamic>.from(
+            profileResp.data['data'],
+          );
+          final mergedProfile = <String, dynamic>{
+            ...serverProfile,
+            if (localProfile != null) ...localProfile,
+          };
+          setState(() {
+            _profile = ProfileApi.fromJson(mergedProfile);
+            _statistics = statisticsData;
+          });
+          widget.appState.setViewCount(totalViews);
+          await ViewStorage().saveCount(totalViews);
+        }
+      } else if (mounted) {
+        setState(() {
+          _error = 'Gagal mengambil profil dari server.';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = friendlyApiError(e, fallback: 'Gagal mengambil profil');
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showEditProfileDialog() async {
+    final currentProfile = _profile;
+    if (currentProfile == null) return;
+
+    XFile? selectedProfilePhoto;
+    bool isSaving = false;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> saveProfile() async {
+              setDialogState(() => isSaving = true);
+
+              final token = await _tokenStorage.getToken();
+              if (token == null) {
+                if (mounted) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Token login tidak ditemukan.'),
+                    ),
+                  );
+                }
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+                return;
+              }
+
+              try {
+                String? uploadedProfilePhoto = currentProfile.profilePhoto;
+                if (selectedProfilePhoto != null) {
+                  try {
+                    uploadedProfilePhoto = await _profileService.uploadPhoto(
+                      token: token,
+                      photo: selectedProfilePhoto!,
+                    );
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            friendlyApiError(
+                              e,
+                              fallback: 'Gagal mengupload foto profil',
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                  }
+                }
+
+                final updatedProfile = {
+                  'id': currentProfile.id,
+                  'full_name': currentProfile.fullName,
+                  'username': currentProfile.username,
+                  'email': currentProfile.email,
+                  'motivation': currentProfile.motivation,
+                  'profile_photo': uploadedProfilePhoto,
+                };
+
+                await _profileStorage.saveProfile(updatedProfile);
+                final updated = ProfileApi.fromJson(updatedProfile);
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+
+                if (mounted) {
+                  widget.appState.loginOrRegister(
+                    namaLengkap: updated.fullName,
+                    username: updated.username,
+                    email: updated.email,
+                    kalimatMotivasi: updated.motivation,
+                    profileImagePath: updated.profilePhoto,
+                  );
+                  setState(() {
+                    _profile = updated;
+                  });
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(content: Text('Profil berhasil diperbarui')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        friendlyApiError(
+                          e,
+                          fallback: 'Gagal memperbarui profil',
+                        ),
+                      ),
+                    ),
+                  );
+                }
+              } finally {
+                if (dialogContext.mounted) {
+                  setDialogState(() => isSaving = false);
+                }
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: AppTheme.cardGrey,
+              title: const Text(
+                'Edit Profil',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ProfilePicker(
+                      profileImagePath:
+                          selectedProfilePhoto?.path ??
+                          currentProfile.profilePhoto,
+                      onImageSelected: (file) {
+                        setDialogState(() {
+                          selectedProfilePhoto = file;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving
+                      ? null
+                      : () => Navigator.pop(dialogContext),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: isSaving ? null : saveProfile,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryGold,
+                    foregroundColor: Colors.black,
+                  ),
+                  child: Text(isSaving ? 'Menyimpan...' : 'Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppTheme.primaryGold),
+      );
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.error_outline_rounded,
+                size: 72,
+                color: AppTheme.textMuted,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _error!,
+                style: const TextStyle(color: AppTheme.textMuted),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _loadProfile,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryGold,
+                  foregroundColor: Colors.black,
+                ),
+                child: const Text('Coba Lagi'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final profile = _profile;
+    final namaLengkap = profile?.fullName ?? 'Pengguna';
+    final username = profile?.username ?? 'user';
+    final motivasi = profile?.motivation ?? '';
+    final initial = namaLengkap.isNotEmpty ? namaLengkap[0].toUpperCase() : '?';
+    final totalReviews = _statistics?['total_reviews']?.toString() ?? '0';
+    final totalWatchlists = widget.appState.watchlistIds.length.toString();
+    final totalViews =
+        _statistics?['total_views']?.toString() ??
+        widget.appState.viewCount.toString();
+    final profilePhotoPath = profile?.profilePhoto;
+    final resolvedProfilePhotoUrl = resolveProfilePhotoUrl(profilePhotoPath);
+    final isLocalProfilePhoto =
+        !kIsWeb &&
+        profilePhotoPath != null &&
+        profilePhotoPath.trim().isNotEmpty &&
+        File(profilePhotoPath).existsSync();
 
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         children: [
-          // === Card Profil ===
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -43,7 +355,6 @@ class ProfileTab extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    // Avatar dengan border gold
                     Container(
                       width: 56,
                       height: 56,
@@ -57,18 +368,28 @@ class ProfileTab extends StatelessWidget {
                       child: CircleAvatar(
                         radius: 26,
                         backgroundColor: const Color(0xFF2C303E),
-                        child: Text(
-                          initial,
-                          style: const TextStyle(
-                            color: AppTheme.primaryGold,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 22,
-                          ),
-                        ),
+                        backgroundImage:
+                            profilePhotoPath == null ||
+                                profilePhotoPath.trim().isEmpty
+                            ? null
+                            : isLocalProfilePhoto
+                            ? FileImage(File(profilePhotoPath))
+                            : NetworkImage(resolvedProfilePhotoUrl!),
+                        child:
+                            (profile?.profilePhoto != null &&
+                                profile!.profilePhoto!.isNotEmpty)
+                            ? null
+                            : Text(
+                                initial,
+                                style: const TextStyle(
+                                  color: AppTheme.primaryGold,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 22,
+                                ),
+                              ),
                       ),
                     ),
                     const SizedBox(width: 14),
-                    // Nama & username
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -89,12 +410,20 @@ class ProfileTab extends StatelessWidget {
                               fontSize: 13,
                             ),
                           ),
+                          const SizedBox(height: 2),
+                          Text(
+                            profile?.email ?? '',
+                            style: const TextStyle(
+                              color: AppTheme.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                if (kalimatMotivasi.isNotEmpty) ...[
+                if (motivasi.isNotEmpty) ...[
                   const SizedBox(height: 14),
                   Container(
                     width: double.infinity,
@@ -107,7 +436,7 @@ class ProfileTab extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      '"$kalimatMotivasi"',
+                      '"$motivasi"',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 13,
@@ -116,12 +445,29 @@ class ProfileTab extends StatelessWidget {
                     ),
                   ),
                 ],
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  height: 42,
+                  child: OutlinedButton(
+                    onPressed: _showEditProfileDialog,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primaryGold,
+                      side: const BorderSide(color: AppTheme.primaryGold),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Edit Profil',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-
-          // === Card Statistik ===
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -147,22 +493,22 @@ class ProfileTab extends StatelessWidget {
                     Expanded(
                       child: _buildStatItem(
                         icon: Icons.movie_filter_rounded,
-                        value: '$filmDitonton',
+                        value: totalViews,
                         label: 'Film Ditonton',
                       ),
                     ),
                     Expanded(
                       child: _buildStatItem(
                         icon: Icons.star_border_rounded,
-                        value: '$totalReviews',
+                        value: totalReviews,
                         label: 'Total Review',
                       ),
                     ),
                     Expanded(
                       child: _buildStatItem(
-                        icon: Icons.trending_up_rounded,
-                        value: genreFavorit,
-                        label: 'Genre Favorit',
+                        icon: Icons.bookmark_border_rounded,
+                        value: totalWatchlists,
+                        label: 'Watchlist',
                       ),
                     ),
                   ],
@@ -171,8 +517,6 @@ class ProfileTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-
-          // === Menu Riwayat ===
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
@@ -187,12 +531,11 @@ class ProfileTab extends StatelessWidget {
                   icon: Icons.star_border_rounded,
                   label: 'Riwayat Rating',
                   onTap: () {
-                    // Pindah ke riwayat rating
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) =>
-                            RateHistoryScreen(appState: appState),
+                            RateHistoryScreen(appState: widget.appState),
                       ),
                     );
                   },
@@ -208,12 +551,11 @@ class ProfileTab extends StatelessWidget {
                   icon: Icons.access_time_rounded,
                   label: 'Riwayat Nonton',
                   onTap: () {
-                    // Pindah ke riwayat nonton
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) =>
-                            WatchHistoryScreen(appState: appState),
+                            WatchHistoryScreen(appState: widget.appState),
                       ),
                     );
                   },
@@ -222,18 +564,28 @@ class ProfileTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-
-          // === Tombol Logout ===
           SizedBox(
             width: double.infinity,
             height: 50,
             child: ElevatedButton.icon(
               onPressed: () {
-                appState.logout();
+                // Clear token and local watchlist storage on logout
+                TokenStorage().clearToken();
+                try {
+                  WatchlistStorage().clear();
+                } catch (_) {}
+                try {
+                  ViewStorage().clear();
+                } catch (_) {}
+                try {
+                  ProfileStorage().clear();
+                } catch (_) {}
+                widget.appState.logout();
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => LoginScreen(appState: appState),
+                    builder: (context) =>
+                        LoginScreen(appState: widget.appState),
                   ),
                 );
               },
@@ -258,7 +610,6 @@ class ProfileTab extends StatelessWidget {
     );
   }
 
-  /// Widget item statistik (icon + value + label)
   Widget _buildStatItem({
     required IconData icon,
     required String value,
@@ -295,7 +646,6 @@ class ProfileTab extends StatelessWidget {
     );
   }
 
-  /// Widget item menu (icon + label + chevron)
   Widget _buildMenuItem({
     required BuildContext context,
     required IconData icon,

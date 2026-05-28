@@ -1,14 +1,17 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/movie.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/custom_button.dart';
-import '../widgets/profile_picker.dart';
-import 'login_screen.dart';
 import 'movie_detail_screen.dart';
 import 'watchlist_screen.dart';
 import 'profile_screen.dart';
+import '../services/movie_service.dart';
+import '../services/watchlist_service.dart';
+import '../storage/token_storage.dart';
+import '../storage/watchlist_storage.dart';
+import '../utils/api_error_handler.dart';
+import '../models/movie_api.dart';
 
 class MovieListScreen extends StatefulWidget {
   final AppState appState;
@@ -23,12 +26,69 @@ class _MovieListScreenState extends State<MovieListScreen> {
   late PageController _pageController;
   String _searchQuery = '';
   String _selectedGenre = 'Semua';
+  final MovieService _movieService = MovieService();
+  final WatchlistService _watchlistService = WatchlistService();
+  final TokenStorage _tokenStorage = TokenStorage();
+  final List<String> _genres = ['Semua'];
+  List<Movie> _movies = [];
+  bool _loadingMovies = false;
+  String? _movieError;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: widget.appState.activeTab);
     widget.appState.addListener(_onStateChange);
+    // Load persisted watchlist IDs so UI reflects saved state immediately
+    () async {
+      try {
+        final ids = await WatchlistStorage().loadIds();
+        if (ids.isNotEmpty) widget.appState.setWatchlistIds(ids);
+      } catch (_) {}
+    }();
+    _loadMovies();
+  }
+
+  Future<void> _loadMovies() async {
+    setState(() {
+      _loadingMovies = true;
+      _movieError = null;
+    });
+    final token = await _tokenStorage.getToken();
+    if (token == null) {
+      setState(() {
+        _loadingMovies = false;
+        _movieError = 'Token login tidak ditemukan. Silakan login ulang.';
+      });
+      return;
+    }
+
+    try {
+      final resp = await _movieService.getMovies(token: token);
+      if (resp.statusCode == 200) {
+        final data = resp.data['data'] as List;
+        final apiMovies = data
+            .map((e) => MovieApi.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+        setState(() {
+          _movies = apiMovies.map((m) => m.toMovie()).toList();
+          _movieError = null;
+        });
+      } else {
+        setState(() {
+          _movieError = 'Gagal mengambil movie dari server.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _movieError = friendlyApiError(
+          e,
+          fallback: 'Gagal mengambil movie',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _loadingMovies = false);
+    }
   }
 
   @override
@@ -41,6 +101,47 @@ class _MovieListScreenState extends State<MovieListScreen> {
 
   void _onStateChange() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleWatchlist(Movie movie) async {
+    final token = await _tokenStorage.getToken();
+    if (token == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Token login tidak ditemukan. Silakan login ulang.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    final movieId = int.tryParse(movie.id);
+    if (movieId == null) return;
+
+    final isAdded = widget.appState.isWatchlisted(movie.id);
+
+    try {
+      if (isAdded) {
+        await _watchlistService.removeWatchlist(token: token, movieId: movieId);
+      } else {
+        await _watchlistService.addWatchlist(token: token, movieId: movieId);
+      }
+      widget.appState.toggleWatchlist(movie.id);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyApiError(
+              e,
+              fallback: 'Gagal memperbarui watchlist',
+            ),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   void _showMovieDetail(Movie movie) {
@@ -188,9 +289,12 @@ class _MovieListScreenState extends State<MovieListScreen> {
                               icon: isAdded
                                   ? Icons.bookmark_rounded
                                   : Icons.bookmark_border_rounded,
-                              onPressed: () {
-                                widget.appState.toggleWatchlist(movie.id);
-                                Navigator.pop(context);
+                              onPressed: () async {
+                                final navigator = Navigator.of(context);
+                                await _toggleWatchlist(movie);
+                                if (mounted) {
+                                  navigator.pop();
+                                }
                               },
                             ),
                           ),
@@ -340,7 +444,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
                     // Watchlist / Tersimpan
                     Expanded(
                       child: InkWell(
-                        onTap: () => widget.appState.toggleWatchlist(movie.id),
+                        onTap: () => _toggleWatchlist(movie),
                         borderRadius: BorderRadius.circular(8),
                         child: Container(
                           height: 34,
@@ -439,7 +543,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
   }
 
   Widget _buildHomeTab() {
-    final filteredMovies = Movie.mockMovies.where((movie) {
+    final filteredMovies = _movies.where((movie) {
       final matchesSearch =
           movie.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
           movie.description.toLowerCase().contains(_searchQuery.toLowerCase());
@@ -551,32 +655,48 @@ class _MovieListScreenState extends State<MovieListScreen> {
           ),
           const SizedBox(height: 20),
           Expanded(
-            child: filteredMovies.isEmpty
-                ? const Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.movie_filter_rounded,
-                        size: 64,
-                        color: AppTheme.textMuted,
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'Tidak ada film yang cocok.',
-                        style: TextStyle(
-                          color: AppTheme.textMuted,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ],
-                  )
-                : ListView.builder(
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: filteredMovies.length,
-                    itemBuilder: (context, index) {
-                      return _buildMovieCard(filteredMovies[index]);
-                    },
-                  ),
+            child: _loadingMovies
+                ? const Center(child: CircularProgressIndicator())
+                : (_movieError != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              _movieError!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: AppTheme.textMuted,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        )
+                      : (filteredMovies.isEmpty
+                            ? const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.movie_filter_rounded,
+                                    size: 64,
+                                    color: AppTheme.textMuted,
+                                  ),
+                                  SizedBox(height: 16),
+                                  Text(
+                                    'Tidak ada film yang cocok.',
+                                    style: TextStyle(
+                                      color: AppTheme.textMuted,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : ListView.builder(
+                                physics: const BouncingScrollPhysics(),
+                                itemCount: filteredMovies.length,
+                                itemBuilder: (context, index) {
+                                  return _buildMovieCard(filteredMovies[index]);
+                                },
+                              ))),
           ),
         ],
       ),
@@ -584,7 +704,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
   }
 
   void _showFilterBottomSheet() {
-    final genres = ['Semua', 'Action', 'Crime', 'Drama', 'Sci-Fi'];
+    final genres = _genres;
 
     showModalBottomSheet(
       context: context,

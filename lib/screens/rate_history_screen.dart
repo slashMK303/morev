@@ -1,17 +1,44 @@
 import 'package:flutter/material.dart';
+import '../models/review.dart';
+import '../storage/review_storage.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 
-class RateHistoryScreen extends StatelessWidget {
+class RateHistoryScreen extends StatefulWidget {
   final AppState appState;
 
   const RateHistoryScreen({super.key, required this.appState});
 
   @override
-  Widget build(BuildContext context) {
-    // Ambil data ulasan
-    final reviews = _getReviews();
+  State<RateHistoryScreen> createState() => _RateHistoryScreenState();
+}
 
+class _RateHistoryScreenState extends State<RateHistoryScreen> {
+  final ReviewStorage _reviewStorage = ReviewStorage();
+  List<Review> _reviews = [];
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReviews();
+  }
+
+  Future<void> _loadReviews() async {
+    setState(() {
+      _loading = true;
+    });
+
+    final reviews = await _reviewStorage.loadReviews();
+    if (!mounted) return;
+    setState(() {
+      _reviews = reviews;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.backgroundBlack,
       appBar: AppBar(
@@ -31,7 +58,11 @@ class RateHistoryScreen extends StatelessWidget {
         ),
         centerTitle: false,
       ),
-      body: reviews.isEmpty
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: AppTheme.primaryGold),
+            )
+          : _reviews.isEmpty
           ? const Center(
               child: Text(
                 'Belum ada riwayat rating.',
@@ -41,42 +72,38 @@ class RateHistoryScreen extends StatelessWidget {
           : ListView.builder(
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              itemCount: reviews.length,
+              itemCount: _reviews.length,
               itemBuilder: (context, index) {
-                final item = reviews[index];
+                final item = _reviews[index];
                 return _buildRatingCard(item);
               },
             ),
     );
   }
 
-  // Gabungkan ulasan
-  List<_RateHistoryItem> _getReviews() {
-    // Data default
-    return [
-      _RateHistoryItem(
-        title: 'Inception',
-        year: '2010',
-        rating: 4,
-        comment: 'bagus dan menarik',
-        dateStr: '28 April 2026',
-        posterUrl:
-            'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=200&auto=format&fit=crop',
-      ),
-      _RateHistoryItem(
-        title: 'Forrest Gump',
-        year: '1994',
-        rating: 4,
-        comment: 'bagus',
-        dateStr: '28 April 2026',
-        posterUrl:
-            'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=200&auto=format&fit=crop',
-      ),
-    ];
-  }
-
   // Desain kartu
-  Widget _buildRatingCard(_RateHistoryItem item) {
+  Widget _buildRatingCard(Review item) {
+    final posterUrl = '';
+    final movieTitle = 'Movie #${item.movieId}';
+    final movieYear = '-';
+    final months = [
+      '',
+      'Januari',
+      'Februari',
+      'Maret',
+      'April',
+      'Mei',
+      'Juni',
+      'Juli',
+      'Agustus',
+      'September',
+      'Oktober',
+      'November',
+      'Desember',
+    ];
+    final dateStr =
+        '${item.date.day} ${months[item.date.month]} ${item.date.year}';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
@@ -91,24 +118,35 @@ class RateHistoryScreen extends StatelessWidget {
           // Poster film
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.network(
-              item.posterUrl,
-              width: 90,
-              height: 125,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  width: 90,
-                  height: 125,
-                  color: const Color(0xFF1E212E),
-                  child: const Icon(
-                    Icons.movie_rounded,
-                    color: AppTheme.primaryGold,
-                    size: 28,
+            child: posterUrl.isEmpty
+                ? Container(
+                    width: 90,
+                    height: 125,
+                    color: const Color(0xFF1E212E),
+                    child: const Icon(
+                      Icons.movie_rounded,
+                      color: AppTheme.primaryGold,
+                      size: 28,
+                    ),
+                  )
+                : Image.network(
+                    posterUrl,
+                    width: 90,
+                    height: 125,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        width: 90,
+                        height: 125,
+                        color: const Color(0xFF1E212E),
+                        child: const Icon(
+                          Icons.movie_rounded,
+                          color: AppTheme.primaryGold,
+                          size: 28,
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
           const SizedBox(width: 16),
           // Detail riwayat
@@ -118,7 +156,7 @@ class RateHistoryScreen extends StatelessWidget {
               children: [
                 // Judul
                 Text(
-                  item.title,
+                  movieTitle,
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -130,7 +168,7 @@ class RateHistoryScreen extends StatelessWidget {
                 const SizedBox(height: 4),
                 // Tahun
                 Text(
-                  item.year,
+                  movieYear,
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.bold,
@@ -174,7 +212,7 @@ class RateHistoryScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      item.dateStr,
+                      dateStr,
                       style: const TextStyle(
                         color: AppTheme.textMuted,
                         fontSize: 12,
@@ -189,23 +227,4 @@ class RateHistoryScreen extends StatelessWidget {
       ),
     );
   }
-}
-
-// Model internal ulasan
-class _RateHistoryItem {
-  final String title;
-  final String year;
-  final int rating;
-  final String comment;
-  final String dateStr;
-  final String posterUrl;
-
-  _RateHistoryItem({
-    required this.title,
-    required this.year,
-    required this.rating,
-    required this.comment,
-    required this.dateStr,
-    required this.posterUrl,
-  });
 }

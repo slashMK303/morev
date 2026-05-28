@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/custom_button.dart';
@@ -7,6 +8,14 @@ import '../widgets/film_logo.dart';
 import '../widgets/profile_picker.dart';
 import 'movie_list_screen.dart';
 import 'login_screen.dart';
+import '../services/auth_service.dart';
+import '../models/auth_response.dart';
+import '../storage/token_storage.dart';
+import '../storage/view_storage.dart';
+import '../storage/watchlist_storage.dart';
+import '../storage/profile_storage.dart';
+import '../utils/api_error_handler.dart';
+import '../utils/profile_photo_url.dart';
 
 class RegisterScreen extends StatefulWidget {
   final AppState appState;
@@ -23,7 +32,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _motivasiController = TextEditingController();
+  final AuthService _authService = AuthService();
+  final TokenStorage _tokenStorage = TokenStorage();
   String? _profileImagePath;
+  XFile? _profileImageFile;
+  bool _isLoading = false;
+  String? _formServerError;
+  final Map<String, String> _fieldServerErrors = {};
 
   @override
   void dispose() {
@@ -35,18 +50,72 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  void _register() {
-    if (_formKey.currentState!.validate()) {
-      // Simpan data ke state
-      widget.appState.loginOrRegister(
-        namaLengkap: _namaController.text.trim(),
-        username: _usernameController.text.trim(),
-        email: _emailController.text.trim(),
-        kalimatMotivasi: _motivasiController.text.trim(),
-        profileImagePath: _profileImagePath,
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+    setState(() {
+      _formServerError = null;
+      _fieldServerErrors.clear();
+    });
+
+    try {
+      final registerResp = await _authService.register(
+        payload: {
+          'full_name': _namaController.text.trim(),
+          'username': _usernameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'password': _passwordController.text,
+          'motivation': _motivasiController.text.trim(),
+        },
+        profilePhoto: _profileImageFile,
       );
 
-      // Tampilkan notifikasi sukses
+      String? uploadedProfilePath;
+      final registerData = registerResp.data;
+      if (registerData is Map<String, dynamic>) {
+        final responseData = registerData['data'];
+        if (responseData is Map<String, dynamic>) {
+          final rawPhoto = responseData['profile_photo']?.toString();
+          if (rawPhoto != null && rawPhoto.trim().isNotEmpty) {
+            uploadedProfilePath = normalizeUploadedProfilePhotoPath(rawPhoto);
+          }
+        }
+      }
+
+      final loginResp = await _authService.login({
+        'email': _emailController.text.trim(),
+        'password': _passwordController.text,
+      });
+
+      final auth = AuthResponse.fromJson(
+        Map<String, dynamic>.from(loginResp.data),
+      );
+      if (auth.accessToken.isNotEmpty) {
+        await _tokenStorage.saveToken(auth.accessToken);
+
+        // Populate AppState with newly registered user info so UI shows username
+        widget.appState.loginOrRegister(
+          namaLengkap: _namaController.text.trim(),
+          username: _usernameController.text.trim(),
+          email: _emailController.text.trim(),
+          kalimatMotivasi: _motivasiController.text.trim(),
+          profileImagePath: uploadedProfilePath,
+        );
+        // Newly registered account likely has empty watchlist; ensure local storage cleared
+        try {
+          await WatchlistStorage().saveIds(<String>{});
+        } catch (_) {}
+
+        try {
+          await ViewStorage().saveCount(0);
+          widget.appState.setViewCount(0);
+          await ProfileStorage().clear();
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF1F222B),
@@ -59,7 +128,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Registrasi Berhasil! Selamat Datang ${_namaController.text.trim()}',
+                  'Registrasi berhasil.',
                   style: const TextStyle(
                     color: AppTheme.textWhite,
                     fontWeight: FontWeight.bold,
@@ -72,7 +141,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       );
 
-      // ke halaman utama
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
@@ -93,6 +161,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
           },
         ),
       );
+    } catch (e) {
+      final fieldErrors = fieldErrorsFromApiError(e);
+      if (fieldErrors.isNotEmpty) {
+        setState(() {
+          _fieldServerErrors
+            ..clear()
+            ..addAll(fieldErrors);
+          _formServerError = fieldErrors.length > 1
+              ? 'Periksa kembali input yang ditandai.'
+              : null;
+        });
+        _formKey.currentState?.validate();
+        return;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyApiError(e, fallback: 'Registrasi/login gagal'),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -152,12 +245,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                         const SizedBox(height: 28),
 
+                        if (_formServerError != null) ...[
+                          _buildServerErrorBanner(_formServerError!),
+                          const SizedBox(height: 20),
+                        ],
+
                         // Nama Lengkap
                         CustomTextField(
                           label: 'Nama Lengkap',
                           hintText: 'Masukkan nama lengkap',
                           controller: _namaController,
+                          onChanged: (_) {
+                            if (_fieldServerErrors.containsKey('full_name') ||
+                                _formServerError != null) {
+                              setState(() {
+                                _fieldServerErrors.remove('full_name');
+                                _formServerError = null;
+                              });
+                            }
+                          },
                           validator: (val) {
+                            final serverError = _fieldServerErrors['full_name'];
+                            if (serverError != null) {
+                              return serverError;
+                            }
                             if (val == null || val.trim().isEmpty) {
                               return 'Nama lengkap wajib diisi';
                             }
@@ -174,7 +285,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           label: 'Username',
                           hintText: 'Pilih username unik',
                           controller: _usernameController,
+                          onChanged: (_) {
+                            if (_fieldServerErrors.containsKey('username') ||
+                                _formServerError != null) {
+                              setState(() {
+                                _fieldServerErrors.remove('username');
+                                _formServerError = null;
+                              });
+                            }
+                          },
                           validator: (val) {
+                            final serverError = _fieldServerErrors['username'];
+                            if (serverError != null) {
+                              return serverError;
+                            }
                             if (val == null || val.trim().isEmpty) {
                               return 'Username wajib diisi';
                             }
@@ -192,7 +316,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           hintText: 'email@example.com',
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
+                          onChanged: (_) {
+                            if (_fieldServerErrors.containsKey('email') ||
+                                _formServerError != null) {
+                              setState(() {
+                                _fieldServerErrors.remove('email');
+                                _formServerError = null;
+                              });
+                            }
+                          },
                           validator: (val) {
+                            final serverError = _fieldServerErrors['email'];
+                            if (serverError != null) {
+                              return serverError;
+                            }
                             if (val == null || val.trim().isEmpty) {
                               return 'Email wajib diisi';
                             }
@@ -213,7 +350,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           hintText: 'Buat password yang kuat',
                           controller: _passwordController,
                           isPassword: true,
+                          onChanged: (_) {
+                            if (_fieldServerErrors.containsKey('password') ||
+                                _formServerError != null) {
+                              setState(() {
+                                _fieldServerErrors.remove('password');
+                                _formServerError = null;
+                              });
+                            }
+                          },
                           validator: (val) {
+                            final serverError = _fieldServerErrors['password'];
+                            if (serverError != null) {
+                              return serverError;
+                            }
                             if (val == null || val.isEmpty) {
                               return 'Password wajib diisi';
                             }
@@ -231,7 +381,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           hintText: 'Tulis kalimat motivasi favoritmu',
                           controller: _motivasiController,
                           maxLines: 2,
+                          onChanged: (_) {
+                            if (_fieldServerErrors.containsKey('motivation') ||
+                                _formServerError != null) {
+                              setState(() {
+                                _fieldServerErrors.remove('motivation');
+                                _formServerError = null;
+                              });
+                            }
+                          },
                           validator: (val) {
+                            final serverError =
+                                _fieldServerErrors['motivation'];
+                            if (serverError != null) {
+                              return serverError;
+                            }
                             if (val == null || val.trim().isEmpty) {
                               return 'Kalimat motivasi wajib diisi';
                             }
@@ -243,9 +407,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         // Foto Profil
                         ProfilePicker(
                           profileImagePath: _profileImagePath,
-                          onImageSelected: (path) {
+                          onImageSelected: (file) {
                             setState(() {
-                              _profileImagePath = path;
+                              _profileImageFile = file;
+                              _profileImagePath = file?.path;
                             });
                           },
                         ),
@@ -253,8 +418,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                         // Tombol Daftar
                         CustomButton(
-                          text: 'Daftar Sekarang',
-                          onPressed: _register,
+                          text: _isLoading ? 'Mendaftar...' : 'Daftar Sekarang',
+                          onPressed: _isLoading ? () {} : _register,
                         ),
                         const SizedBox(height: 24),
 
@@ -325,6 +490,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildServerErrorBanner(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF301C1F),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            color: Colors.redAccent,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
