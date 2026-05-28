@@ -1,11 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../utils/profile_photo_url.dart';
 import '../theme/app_theme.dart';
 
 class ProfilePicker extends StatefulWidget {
   final String? profileImagePath;
-  final ValueChanged<String?> onImageSelected;
+  final ValueChanged<XFile?> onImageSelected;
 
   const ProfilePicker({
     super.key,
@@ -24,7 +25,7 @@ class _ProfilePickerState extends State<ProfilePicker> {
     try {
       final XFile? image = await _picker.pickImage(source: source);
       if (image != null) {
-        widget.onImageSelected(image.path);
+        widget.onImageSelected(image);
       }
     } catch (e) {
       // Abaikan jika pengguna membatalkan
@@ -100,16 +101,9 @@ class _ProfilePickerState extends State<ProfilePicker> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: AppTheme.primaryGold.withOpacity(0.15),
-              border: Border.all(
-                color: AppTheme.primaryGold,
-                width: 2,
-              ),
+              border: Border.all(color: AppTheme.primaryGold, width: 2),
             ),
-            child: Icon(
-              icon,
-              color: AppTheme.primaryGold,
-              size: 28,
-            ),
+            child: Icon(icon, color: AppTheme.primaryGold, size: 28),
           ),
           const SizedBox(height: 10),
           Text(
@@ -126,6 +120,14 @@ class _ProfilePickerState extends State<ProfilePicker> {
 
   @override
   Widget build(BuildContext context) {
+    final resolvedUrl = resolveProfilePhotoUrl(widget.profileImagePath) ?? '';
+    final canShowRemotePreview =
+        resolvedUrl.isNotEmpty &&
+        (resolvedUrl.startsWith('http://') ||
+            resolvedUrl.startsWith('https://') ||
+            resolvedUrl.startsWith('blob:') ||
+            resolvedUrl.startsWith('data:'));
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -158,20 +160,39 @@ class _ProfilePickerState extends State<ProfilePicker> {
                     height: 32,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      image: DecorationImage(
-                        image: FileImage(File(widget.profileImagePath!)),
-                        fit: BoxFit.cover,
-                      ),
+                      color: AppTheme.primaryGold.withOpacity(0.15),
+                    ),
+                    child: ClipOval(
+                      child: canShowRemotePreview
+                          ? Image.network(
+                              resolvedUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(
+                                  Icons.person_rounded,
+                                  color: AppTheme.primaryGold,
+                                  size: 18,
+                                );
+                              },
+                            )
+                          : Image.file(
+                              File(widget.profileImagePath!),
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(
+                                  Icons.person_rounded,
+                                  color: AppTheme.primaryGold,
+                                  size: 18,
+                                );
+                              },
+                            ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
                       'Foto Profil Terpilih',
-                      style: TextStyle(
-                        color: AppTheme.textWhite,
-                        fontSize: 15,
-                      ),
+                      style: TextStyle(color: AppTheme.textWhite, fontSize: 15),
                     ),
                   ),
                 ] else ...[

@@ -25,6 +25,10 @@ class AppState extends ChangeNotifier {
   final Set<String> _watchlistIds = {};
   Set<String> get watchlistIds => _watchlistIds;
 
+  // Hitungan film ditonton yang disimpan lokal
+  int _viewCount = 0;
+  int get viewCount => _viewCount;
+
   // Tab navigasi bawah yang aktif
   int _activeTab = 0;
   int get activeTab => _activeTab;
@@ -52,10 +56,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Set watchlist IDs in bulk (used when syncing from storage/server)
+  void setWatchlistIds(Set<String> ids) {
+    _watchlistIds.clear();
+    _watchlistIds.addAll(ids);
+    notifyListeners();
+  }
+
+  void setViewCount(int count) {
+    _viewCount = count < 0 ? 0 : count;
+    notifyListeners();
+  }
+
+  void incrementViewCount() {
+    _viewCount += 1;
+    notifyListeners();
+  }
+
   // Keluar
   void logout() {
     _currentUser = null;
     _watchlistIds.clear();
+    _viewCount = 0;
     _activeTab = 0;
     notifyListeners();
   }

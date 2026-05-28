@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 import '../models/movie.dart';
 import '../models/review.dart';
+import '../models/movie_api.dart';
+import '../services/movie_service.dart';
+import '../services/review_service.dart';
+import '../services/watchlist_service.dart';
 import '../state/app_state.dart';
+import '../storage/token_storage.dart';
+import '../storage/review_storage.dart';
+import '../storage/view_storage.dart';
+import '../utils/api_error_handler.dart';
 import '../theme/app_theme.dart';
 
 class MovieDetailScreen extends StatefulWidget {
@@ -21,15 +29,22 @@ class MovieDetailScreen extends StatefulWidget {
 class _MovieDetailScreenState extends State<MovieDetailScreen> {
   int _userRating = 0;
   final TextEditingController _commentController = TextEditingController();
-  late List<Review> _reviews;
+  List<Review> _reviews = [];
+  Movie? _movie;
+  bool _loadingDetail = false;
+  final ReviewService _reviewService = ReviewService();
+  final MovieService _movieService = MovieService();
+  final WatchlistService _watchlistService = WatchlistService();
+  final TokenStorage _tokenStorage = TokenStorage();
+  final ReviewStorage _reviewStorage = ReviewStorage();
 
   @override
   void initState() {
     super.initState();
+    _movie = widget.movie;
     // Ambil review untuk film ini
-    _reviews = Review.mockReviews
-        .where((r) => r.movieId == widget.movie.id)
-        .toList();
+    _loadLocalReviews();
+    _loadMovieDetail();
     widget.appState.addListener(_onStateChange);
   }
 
@@ -44,6 +59,129 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _loadLocalReviews() async {
+    final reviews = await _reviewStorage.loadReviews();
+    if (!mounted) return;
+    setState(() {
+      _reviews = reviews.where((r) => r.movieId == widget.movie.id).toList();
+    });
+  }
+
+  Future<void> _loadMovieDetail() async {
+    final token = await _tokenStorage.getToken();
+    if (token == null) return;
+
+    final movieId = int.tryParse(widget.movie.id);
+    if (movieId == null) return;
+
+    setState(() {
+      _loadingDetail = true;
+    });
+
+    try {
+      final resp = await _movieService.getMovieDetail(
+        token: token,
+        movieId: movieId,
+      );
+
+      if (resp.statusCode == 200) {
+        final data = Map<String, dynamic>.from(resp.data['data']);
+        final apiMovie = MovieApi.fromJson(data);
+
+        final reviewsData = data['reviews'];
+        final serverReviews = <Review>[];
+        if (reviewsData is List) {
+          for (final item in reviewsData) {
+            if (item is Map<String, dynamic>) {
+              serverReviews.add(
+                Review(
+                  id: item['id']?.toString() ?? '',
+                  movieId: widget.movie.id,
+                  username: 'Anonim',
+                  rating: item['rating'] is int
+                      ? item['rating']
+                      : int.tryParse(item['rating']?.toString() ?? '0') ?? 0,
+                  comment: item['comment']?.toString() ?? '',
+                  date:
+                      DateTime.tryParse(item['created_at']?.toString() ?? '') ??
+                      DateTime.now(),
+                ),
+              );
+            }
+          }
+        }
+
+        final localReviews = await _reviewStorage.loadReviews();
+        final localForMovie = localReviews
+            .where((r) => r.movieId == widget.movie.id)
+            .toList();
+        final mergedReviews = <Review>[...localForMovie];
+        for (final review in serverReviews) {
+          final duplicate = mergedReviews.any(
+            (item) =>
+                item.comment == review.comment && item.rating == review.rating,
+          );
+          if (!duplicate) {
+            mergedReviews.add(review);
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _movie = apiMovie.toMovie();
+          _reviews = mergedReviews;
+        });
+      }
+    } catch (_) {
+      // ignore detail load failures; fallback to existing data
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingDetail = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleWatchlist() async {
+    final token = await _tokenStorage.getToken();
+    if (token == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Token login tidak ditemukan. Silakan login ulang.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    final movieId = int.tryParse(_movie?.id ?? widget.movie.id);
+    if (movieId == null) return;
+
+    final watchId = _movie?.id ?? widget.movie.id;
+    final isWatchlisted = widget.appState.isWatchlisted(watchId);
+
+    try {
+      if (isWatchlisted) {
+        await _watchlistService.removeWatchlist(token: token, movieId: movieId);
+      } else {
+        await _watchlistService.addWatchlist(token: token, movieId: movieId);
+      }
+      widget.appState.toggleWatchlist(watchId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyApiError(e, fallback: 'Gagal memperbarui watchlist'),
+          ),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
   /// Hitung distribusi rating (1-5) dari daftar review
   Map<int, int> _getRatingDistribution() {
     final dist = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
@@ -53,7 +191,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     return dist;
   }
 
-  void _submitReview() {
+  Future<void> _submitReview() async {
     if (_userRating == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -67,37 +205,94 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
       return;
     }
 
-    final newReview = Review(
-      id: 'r_${DateTime.now().millisecondsSinceEpoch}',
-      movieId: widget.movie.id,
-      username: widget.appState.currentUser?.username ?? 'Anonim',
-      rating: _userRating,
-      comment: _commentController.text.trim(),
-      date: DateTime.now(),
-    );
+    final token = await _tokenStorage.getToken();
+    if (token == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Token login tidak ditemukan. Silakan login ulang.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
 
-    setState(() {
-      _reviews.insert(0, newReview);
-      _userRating = 0;
-      _commentController.clear();
-    });
+    final movieId = int.tryParse(_movie?.id ?? widget.movie.id);
+    if (movieId == null) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: Color(0xFF1F222B),
-        content: Text(
-          'Review berhasil dikirim!',
-          style: TextStyle(
-            color: AppTheme.primaryGold,
-            fontWeight: FontWeight.bold,
+    try {
+      await _reviewService.createReview(
+        token: token,
+        movieId: movieId,
+        rating: _userRating,
+        comment: _commentController.text.trim(),
+      );
+
+      final newReview = Review(
+        id: 'r_${DateTime.now().millisecondsSinceEpoch}',
+        movieId: _movie?.id ?? widget.movie.id,
+        username: widget.appState.currentUser?.username ?? 'Anonim',
+        rating: _userRating,
+        comment: _commentController.text.trim(),
+        date: DateTime.now(),
+      );
+
+      await _reviewStorage.saveReview(newReview);
+
+      if (!mounted) return;
+      setState(() {
+        _reviews.insert(0, newReview);
+        _userRating = 0;
+        _commentController.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF1F222B),
+          content: Text(
+            'Review berhasil dikirim!',
+            style: TextStyle(
+              color: AppTheme.primaryGold,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(friendlyApiError(e, fallback: 'Gagal kirim review')),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  Future<void> _watchMovie() async {
+    final token = await _tokenStorage.getToken();
+    if (token == null) return;
+
+    final movieId = int.tryParse(_movie?.id ?? widget.movie.id);
+    if (movieId == null) return;
+
+    try {
+      final resp = await _movieService.watchMovie(
+        token: token,
+        movieId: movieId,
+      );
+      if (resp.statusCode == 200 && mounted) {
+        widget.appState.incrementViewCount();
+        await ViewStorage().saveCount(widget.appState.viewCount);
+      }
+    } catch (_) {
+      // ignore watch history failures
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final movie = _movie ?? widget.movie;
     return Scaffold(
       backgroundColor: AppTheme.backgroundBlack,
       appBar: AppBar(
@@ -124,7 +319,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
             // Banner / Poster film
             _buildPosterBanner(),
             // Info film
-            _buildMovieInfoCard(),
+            _buildMovieInfoCard(movie),
             const SizedBox(height: 16),
             // Tambah Review
             _buildAddReviewCard(),
@@ -140,37 +335,52 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
 
   /// Banner poster film di atas
   Widget _buildPosterBanner() {
+    final movie = _movie ?? widget.movie;
     return SizedBox(
       width: double.infinity,
       height: 200,
-      child: Image.network(
-        widget.movie.posterUrl,
-        width: double.infinity,
-        height: 200,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            height: 200,
-            color: const Color(0xFF1E212E),
-            child: const Center(
-              child: Icon(
-                Icons.movie_rounded,
-                size: 64,
-                color: AppTheme.primaryGold,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.network(
+              movie.posterUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: const Color(0xFF1E212E),
+                  child: const Center(
+                    child: Icon(
+                      Icons.movie_rounded,
+                      size: 64,
+                      color: AppTheme.primaryGold,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          if (_loadingDetail)
+            const Positioned(
+              right: 12,
+              bottom: 12,
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppTheme.primaryGold,
+                ),
               ),
             ),
-          );
-        },
+        ],
       ),
     );
   }
 
   /// Card info film (judul, tahun, genre, sinopsis, statistik rating, tombol)
-  Widget _buildMovieInfoCard() {
-    final isWatchlisted = widget.appState.isWatchlisted(widget.movie.id);
-    final genres = widget.movie.genres.isNotEmpty
-        ? widget.movie.genres
-        : [widget.movie.genre];
+  Widget _buildMovieInfoCard(Movie movie) {
+    final isWatchlisted = widget.appState.isWatchlisted(movie.id);
+    final genres = movie.genres.isNotEmpty ? movie.genres : [movie.genre];
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -185,7 +395,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         children: [
           // Judul film
           Text(
-            widget.movie.title,
+            movie.title,
             style: const TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
@@ -195,7 +405,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           const SizedBox(height: 4),
           // Tahun
           Text(
-            widget.movie.year,
+            movie.year,
             style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.bold,
@@ -215,10 +425,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: AppTheme.primaryGold,
-                    width: 1,
-                  ),
+                  border: Border.all(color: AppTheme.primaryGold, width: 1),
                 ),
                 child: Text(
                   genre,
@@ -234,7 +441,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           const SizedBox(height: 16),
           // Deskripsi
           Text(
-            widget.movie.description,
+            movie.description,
             style: const TextStyle(
               color: AppTheme.textMuted,
               fontSize: 13,
@@ -260,7 +467,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               // Watchlist button
               Expanded(
                 child: InkWell(
-                  onTap: () => widget.appState.toggleWatchlist(widget.movie.id),
+                  onTap: _toggleWatchlist,
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     height: 40,
@@ -309,11 +516,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               Expanded(
                 child: InkWell(
                   onTap: () {
+                    _watchMovie();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         backgroundColor: const Color(0xFF1F222B),
                         content: Text(
-                          'Memutar ${widget.movie.title}...',
+                          'Memutar ${movie.title}...',
                           style: const TextStyle(
                             color: AppTheme.primaryGold,
                             fontWeight: FontWeight.bold,
@@ -545,10 +753,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               ),
               child: const Text(
                 'Kirim Review',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -585,17 +790,17 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               child: Center(
                 child: Text(
                   'Belum ada review untuk film ini.',
-                  style: TextStyle(
-                    color: AppTheme.textMuted,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
                 ),
               ),
             )
           else
             ...List.generate(_reviews.length, (index) {
               final review = _reviews[index];
-              return _buildReviewItem(review, isLast: index == _reviews.length - 1);
+              return _buildReviewItem(
+                review,
+                isLast: index == _reviews.length - 1,
+              );
             }),
         ],
       ),
@@ -606,10 +811,22 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   Widget _buildReviewItem(Review review, {bool isLast = false}) {
     // Format tanggal
     final months = [
-      '', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+      '',
+      'Januari',
+      'Februari',
+      'Maret',
+      'April',
+      'Mei',
+      'Juni',
+      'Juli',
+      'Agustus',
+      'September',
+      'Oktober',
+      'November',
+      'Desember',
     ];
-    final dateStr = '${review.date.day} ${months[review.date.month]} ${review.date.year}';
+    final dateStr =
+        '${review.date.day} ${months[review.date.month]} ${review.date.year}';
 
     // Inisial dari username
     final initial = review.username.isNotEmpty

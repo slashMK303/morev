@@ -16,39 +16,27 @@ class Review {
     required this.date,
   });
 
-  /// Data dummy review
-  static List<Review> get mockReviews => [
-    Review(
-      id: 'r1',
-      movieId: '2', // Inception
-      username: 'test',
-      rating: 4,
-      comment: 'bagus dan menarik',
-      date: DateTime(2026, 4, 28),
-    ),
-    Review(
-      id: 'r2',
-      movieId: '5', // The Dark Knight
-      username: 'cinephile',
-      rating: 5,
-      comment: 'Film terbaik sepanjang masa!',
-      date: DateTime(2026, 5, 10),
-    ),
-    Review(
-      id: 'r3',
-      movieId: '1', // Forrest Gump
-      username: 'moviefan',
-      rating: 5,
-      comment: 'Sangat mengharukan dan inspiratif',
-      date: DateTime(2026, 5, 15),
-    ),
-    Review(
-      id: 'r4',
-      movieId: '3', // Interstellar
-      username: 'spacelover',
-      rating: 5,
-      comment: 'Visual yang luar biasa!',
-      date: DateTime(2026, 3, 20),
-    ),
-  ];
+  factory Review.fromJson(Map<String, dynamic> json) {
+    return Review(
+      id: json['id']?.toString() ?? '',
+      movieId: json['movie_id']?.toString() ?? '',
+      username: json['username']?.toString() ?? '',
+      rating: json['rating'] is int
+          ? json['rating']
+          : int.tryParse(json['rating']?.toString() ?? '0') ?? 0,
+      comment: json['comment']?.toString() ?? '',
+      date: DateTime.tryParse(json['date']?.toString() ?? '') ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'movie_id': movieId,
+      'username': username,
+      'rating': rating,
+      'comment': comment,
+      'date': date.toIso8601String(),
+    };
+  }
 }
