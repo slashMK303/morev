@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'screens/register_screen.dart';
-import 'theme/app_theme.dart';
-import 'state/app_state.dart';
+import 'package:morev/screens/login_screen.dart';
+import 'package:morev/theme/app_theme.dart';
+import 'package:morev/state/app_state.dart';
 
 void main() {
   runApp(const MyApp());
@@ -23,7 +23,7 @@ class _MyAppState extends State<MyApp> {
       title: 'Morev Movie Review',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: RegisterScreen(appState: _appState),
+      home: LoginScreen(appState: _appState),
     );
   }
 }

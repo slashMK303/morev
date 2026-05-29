@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/movie.dart';
 import '../models/review.dart';
 import '../models/movie_api.dart';
+import '../models/movie_watch_api.dart';
 import '../services/movie_service.dart';
 import '../services/review_service.dart';
 import '../services/watchlist_service.dart';
