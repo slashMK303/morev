@@ -94,6 +94,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (auth.accessToken.isNotEmpty) {
         await _tokenStorage.saveToken(auth.accessToken);
 
+        // Simpan profil ke storage lokal untuk auto-login
+        await ProfileStorage().saveProfile({
+          'full_name': _namaController.text.trim(),
+          'username': _usernameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'motivation': _motivasiController.text.trim(),
+          'profile_photo': uploadedProfilePath,
+        });
+
         // Populate AppState with newly registered user info so UI shows username
         widget.appState.loginOrRegister(
           namaLengkap: _namaController.text.trim(),
