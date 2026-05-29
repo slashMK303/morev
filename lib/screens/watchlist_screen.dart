@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:morev/services/api_client.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/movie.dart';
+import '../models/movie_watch_api.dart';
 import '../models/watchlist_api.dart';
+import '../services/movie_service.dart';
 import '../services/watchlist_service.dart';
 import '../state/app_state.dart';
 import '../storage/token_storage.dart';
@@ -19,15 +23,37 @@ class WatchlistTab extends StatefulWidget {
 
 class _WatchlistTabState extends State<WatchlistTab> {
   final WatchlistService _watchlistService = WatchlistService();
+  final MovieService _movieService = MovieService();
   final TokenStorage _tokenStorage = TokenStorage();
   List<WatchlistApi> _watchlists = [];
   bool _loading = false;
   String? _error;
 
+  bool _watchlistLoadedForCurrentVisit = true;
+
   @override
   void initState() {
     super.initState();
+    widget.appState.addListener(_onStateChange);
     _loadWatchlists();
+  }
+
+  @override
+  void dispose() {
+    widget.appState.removeListener(_onStateChange);
+    super.dispose();
+  }
+
+  void _onStateChange() {
+    if (!mounted) return;
+    if (widget.appState.activeTab == 1) {
+      if (!_watchlistLoadedForCurrentVisit) {
+        _watchlistLoadedForCurrentVisit = true;
+        _loadWatchlists();
+      }
+    } else {
+      _watchlistLoadedForCurrentVisit = false;
+    }
   }
 
   Future<void> _loadWatchlists() async {
@@ -103,6 +129,45 @@ class _WatchlistTabState extends State<WatchlistTab> {
             friendlyApiError(e, fallback: 'Gagal menghapus watchlist'),
           ),
           backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  Future<void> _openMovieUrl(WatchlistApi item) async {
+    final token = await _tokenStorage.getToken();
+    if (token == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Silakan login terlebih dahulu')),
+      );
+      return;
+    }
+
+    try {
+      final resp = await _movieService.watchMovie(
+        token: token,
+        movieId: item.movieId,
+      );
+
+      if (resp.statusCode == 200) {
+        final watchData = MovieWatchApi.fromJson(resp.data);
+        final url = Uri.parse(watchData.url);
+
+        try {
+          await launchUrl(url, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Tidak dapat membuka link film: $e')),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(friendlyApiError(e, fallback: 'Gagal memutar film')),
         ),
       );
     }
@@ -201,150 +266,154 @@ class _WatchlistTabState extends State<WatchlistTab> {
         itemBuilder: (context, index) {
           final item = _watchlists[index];
           final movie = _toMovie(item);
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppTheme.cardGrey,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xFF1E212E), width: 1.2),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    movie.posterUrl,
-                    width: 90,
-                    height: 125,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        width: 90,
-                        height: 125,
-                        color: const Color(0xFF1E212E),
-                        child: const Icon(
-                          Icons.movie_rounded,
-                          color: AppTheme.primaryGold,
-                          size: 28,
-                        ),
-                      );
-                    },
+          return InkWell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => MovieDetailScreen(
+                    movie: movie,
+                    appState: widget.appState,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        movie.title,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+              );
+            },
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.cardGrey,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFF1E212E), width: 1.2),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      '${ApiClient.baseUrl}/uploads/${movie.posterUrl}',
+                      width: 90,
+                      height: 125,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          width: 90,
+                          height: 125,
+                          color: const Color(0xFF1E212E),
+                          child: const Icon(
+                            Icons.movie_rounded,
+                            color: AppTheme.primaryGold,
+                            size: 28,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          movie.title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Tahun rilis: ${movie.year}',
-                        style: const TextStyle(
-                          color: AppTheme.primaryGold,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                        const SizedBox(height: 4),
+                        Text(
+                          'Tahun rilis: ${movie.year}',
+                          style: const TextStyle(
+                            color: AppTheme.primaryGold,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: InkWell(
-                              onTap: () => _removeWatchlist(item),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF2C303E),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.bookmark_remove_rounded,
-                                      size: 14,
-                                      color: Colors.white,
-                                    ),
-                                    SizedBox(width: 6),
-                                    Text(
-                                      'Hapus',
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.bold,
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: InkWell(
+                                onTap: () => _removeWatchlist(item),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2C303E),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.bookmark_remove_rounded,
+                                        size: 14,
                                         color: Colors.white,
                                       ),
-                                    ),
-                                  ],
+                                      SizedBox(width: 6),
+                                      Text(
+                                        'Hapus',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: InkWell(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => MovieDetailScreen(
-                                      movie: movie,
-                                      appState: widget.appState,
-                                    ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: InkWell(
+                                onTap: () => _openMovieUrl(item),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryGold,
+                                    borderRadius: BorderRadius.circular(8),
                                   ),
-                                );
-                              },
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primaryGold,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.open_in_new_rounded,
-                                      size: 14,
-                                      color: Colors.black.withValues(
-                                        alpha: 0.85,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Lihat',
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.bold,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.open_in_new_rounded,
+                                        size: 14,
                                         color: Colors.black.withValues(
                                           alpha: 0.85,
                                         ),
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Lihat',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black.withValues(
+                                            alpha: 0.85,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },

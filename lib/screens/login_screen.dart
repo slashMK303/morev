@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:morev/storage/profile_storage.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/custom_button.dart';
@@ -83,6 +84,16 @@ class _LoginScreenState extends State<LoginScreen> {
           if (profileResp.statusCode == 200) {
             final data = Map<String, dynamic>.from(profileResp.data['data']);
             final profile = ProfileApi.fromJson(data);
+            
+            // Simpan profil ke storage lokal untuk auto-login
+            await ProfileStorage().saveProfile({
+              'full_name': profile.fullName,
+              'username': profile.username,
+              'email': profile.email,
+              'motivation': profile.motivation,
+              'profile_photo': profile.profilePhoto,
+            });
+
             widget.appState.loginOrRegister(
               namaLengkap: profile.fullName,
               username: profile.username,

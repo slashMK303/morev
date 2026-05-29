@@ -1,4 +1,5 @@
 import 'movie.dart';
+import 'genre_api.dart';
 
 class MovieApi {
   final int id;
@@ -11,6 +12,7 @@ class MovieApi {
   final double rating;
   final int viewers;
   final bool isWatchlist;
+  final List<GenreApi> genres;
 
   MovieApi({
     required this.id,
@@ -23,9 +25,17 @@ class MovieApi {
     required this.rating,
     required this.viewers,
     required this.isWatchlist,
+    required this.genres,
   });
 
   factory MovieApi.fromJson(Map<String, dynamic> json) {
+    var genreList = <GenreApi>[];
+    if (json['genres'] is List) {
+      genreList = (json['genres'] as List)
+          .map((g) => GenreApi.fromJson(Map<String, dynamic>.from(g)))
+          .toList();
+    }
+
     return MovieApi(
       id: json['id'] ?? 0,
       title: json['title'] ?? '',
@@ -36,9 +46,10 @@ class MovieApi {
       poster: json['poster'] ?? '',
       backdrop: json['backdrop'] ?? '',
       movieUrl: json['movie_url'] ?? '',
-      rating: (json['rating'] ?? 0).toDouble(),
+      rating: double.tryParse(json['rating']?.toString() ?? '0') ?? 0.0,
       viewers: json['viewers'] ?? 0,
       isWatchlist: json['is_watchlist'] ?? false,
+      genres: genreList,
     );
   }
 
@@ -48,8 +59,8 @@ class MovieApi {
       id: id.toString(),
       title: title,
       description: description,
-      genre: '',
-      genres: const [],
+      genre: genres.isNotEmpty ? genres.first.name : '',
+      genres: genres.map((g) => g.name).toList(),
       year: releaseYear.toString(),
       rating: rating,
       reviewsCount: viewers,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:morev/services/api_client.dart';
 import '../models/review.dart';
 import '../storage/review_storage.dart';
 import '../state/app_state.dart';
@@ -130,7 +131,7 @@ class _RateHistoryScreenState extends State<RateHistoryScreen> {
                     ),
                   )
                 : Image.network(
-                    posterUrl,
+                    '${ApiClient.baseUrl}/uploads/$posterUrl',
                     width: 90,
                     height: 125,
                     fit: BoxFit.cover,

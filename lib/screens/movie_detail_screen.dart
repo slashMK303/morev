@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:morev/services/api_client.dart';
 import '../models/movie.dart';
 import '../models/review.dart';
 import '../models/movie_api.dart';
@@ -343,7 +344,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         children: [
           Positioned.fill(
             child: Image.network(
-              movie.posterUrl,
+              '${ApiClient.baseUrl}/uploads/${movie.posterUrl}',
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) {
                 return Container(

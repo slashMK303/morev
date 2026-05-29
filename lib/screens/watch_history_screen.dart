@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:morev/services/api_client.dart';
 import '../models/history_api.dart';
 import '../services/history_service.dart';
 import '../state/app_state.dart';
@@ -214,7 +215,7 @@ class _WatchHistoryScreenState extends State<WatchHistoryScreen> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(12),
                           child: Image.network(
-                            item.poster,
+                            '${ApiClient.baseUrl}/uploads/${item.poster}',
                             width: 90,
                             height: 125,
                             fit: BoxFit.cover,
