@@ -30,4 +30,11 @@ class MovieService {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
   }
+
+  Future<Response<dynamic>> getGenres({required String token}) {
+    return _dio.get(
+      '/genres',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:morev/services/api_client.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/movie.dart';
 import '../models/movie_watch_api.dart';
@@ -28,10 +29,31 @@ class _WatchlistTabState extends State<WatchlistTab> {
   bool _loading = false;
   String? _error;
 
+  bool _watchlistLoadedForCurrentVisit = true;
+
   @override
   void initState() {
     super.initState();
+    widget.appState.addListener(_onStateChange);
     _loadWatchlists();
+  }
+
+  @override
+  void dispose() {
+    widget.appState.removeListener(_onStateChange);
+    super.dispose();
+  }
+
+  void _onStateChange() {
+    if (!mounted) return;
+    if (widget.appState.activeTab == 1) {
+      if (!_watchlistLoadedForCurrentVisit) {
+        _watchlistLoadedForCurrentVisit = true;
+        _loadWatchlists();
+      }
+    } else {
+      _watchlistLoadedForCurrentVisit = false;
+    }
   }
 
   Future<void> _loadWatchlists() async {
@@ -271,7 +293,7 @@ class _WatchlistTabState extends State<WatchlistTab> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Image.network(
-                      movie.posterUrl,
+                      '${ApiClient.baseUrl}/uploads/${movie.posterUrl}',
                       width: 90,
                       height: 125,
                       fit: BoxFit.cover,

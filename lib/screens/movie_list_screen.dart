@@ -14,6 +14,7 @@ import '../storage/watchlist_storage.dart';
 import '../utils/api_error_handler.dart';
 import '../models/movie_api.dart';
 import '../models/movie_watch_api.dart';
+import '../models/genre_api.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class MovieListScreen extends StatefulWidget {
@@ -36,6 +37,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
   List<Movie> _movies = [];
   bool _loadingMovies = false;
   String? _movieError;
+  bool _moviesLoadedForCurrentVisit = true;
 
   @override
   void initState() {
@@ -49,7 +51,39 @@ class _MovieListScreenState extends State<MovieListScreen> {
         if (ids.isNotEmpty) widget.appState.setWatchlistIds(ids);
       } catch (_) {}
     }();
+    _loadGenres();
     _loadMovies();
+  }
+
+  Future<void> _loadGenres() async {
+    final token = await _tokenStorage.getToken();
+    if (token == null) return;
+
+    try {
+      final resp = await _movieService.getGenres(token: token);
+      if (resp.statusCode == 200) {
+        final data = resp.data['data'] as List;
+        final apiGenres = data
+            .map((e) => GenreApi.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+        
+        if (mounted) {
+          setState(() {
+            _genres.clear();
+            _genres.add('Semua');
+            _genres.addAll(apiGenres.map((g) => g.name));
+            // Sort, keeping 'Semua' at the beginning
+            final names = _genres.sublist(1);
+            names.sort();
+            _genres.clear();
+            _genres.add('Semua');
+            _genres.addAll(names);
+          });
+        }
+      }
+    } catch (_) {
+      // Fail silently for genres, fallback to ['Semua']
+    }
   }
 
   Future<void> _loadMovies() async {
@@ -103,7 +137,16 @@ class _MovieListScreenState extends State<MovieListScreen> {
   }
 
   void _onStateChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (widget.appState.activeTab == 0) {
+      if (!_moviesLoadedForCurrentVisit) {
+        _moviesLoadedForCurrentVisit = true;
+        _loadMovies();
+      }
+    } else {
+      _moviesLoadedForCurrentVisit = false;
+    }
+    setState(() {});
   }
 
   Future<void> _toggleWatchlist(Movie movie) async {
@@ -599,7 +642,7 @@ class _MovieListScreenState extends State<MovieListScreen> {
           movie.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
           movie.description.toLowerCase().contains(_searchQuery.toLowerCase());
       final matchesGenre =
-          _selectedGenre == 'Semua' || movie.genre == _selectedGenre;
+          _selectedGenre == 'Semua' || movie.genres.contains(_selectedGenre);
       return matchesSearch && matchesGenre;
     }).toList();
 
